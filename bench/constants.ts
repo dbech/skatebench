@@ -1,6 +1,6 @@
 // Runs one model on a local OpenAI-compatible server instead of the OpenRouter list.
 // Configure LOCAL_BASE_URL, LOCAL_MODEL and LOCAL_API_KEY in bench/.env (see .env.example).
-export const OUTPUT_DIRECTORY = "./results";
+export const OUTPUT_DIRECTORY = process.env.SKATE_OUTPUT_DIR ?? "./results";
 
 // A single local GPU usually serves one request at a time; fewer repeats than upstream's 30.
 export const MAX_CONCURRENCY = 1;
