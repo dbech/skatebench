@@ -1,12 +1,21 @@
+// Runs one model on a local OpenAI-compatible server instead of the OpenRouter list.
+// Configure LOCAL_BASE_URL, LOCAL_MODEL and LOCAL_API_KEY in bench/.env (see .env.example).
 export const OUTPUT_DIRECTORY = "./results";
 
-export const MAX_CONCURRENCY = 80;
-export const TEST_RUNS_PER_MODEL = 30;
-export const TIMEOUT_SECONDS = 400;
-export const STAGGER_DELAY_MS = 150;
+// A single local GPU usually serves one request at a time; fewer repeats than upstream's 30.
+export const MAX_CONCURRENCY = 1;
+export const TEST_RUNS_PER_MODEL = Number(process.env.SKATE_RUNS ?? 10);
+export const TIMEOUT_SECONDS = 900;
+export const STAGGER_DELAY_MS = 0;
 
 import { type LanguageModel } from "ai";
-import { openrouter } from "@openrouter/ai-sdk-provider";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set; copy bench/.env.example to bench/.env`);
+  return value;
+}
 
 export type RunnableModel = {
   name: string;
@@ -15,219 +24,27 @@ export type RunnableModel = {
   reasoning?: boolean;
 };
 
-// Include "usage" so we can log cost
-const defaultProviderOptions = {
-  usage: {
-    include: true,
-  },
+// skatebench sends no output limit, so local servers would allow the whole context.
+const MAX_TOKENS = Number(process.env.SKATE_MAX_TOKENS ?? 8192);
+const capped: typeof fetch = async (input, init) => {
+  if (init?.body && typeof init.body === "string") {
+    const body = JSON.parse(init.body);
+    body.max_tokens ??= MAX_TOKENS;
+    init = { ...init, body: JSON.stringify(body) };
+  }
+  // Bun's fetch gives up after 300 s; long-reasoning local answers need longer.
+  // skatebench's own TIMEOUT_SECONDS still bounds each answer.
+  return fetch(input, { ...init, timeout: false } as RequestInit);
 };
 
-export const modelsToRun: RunnableModel[] = [
-  // Open weight
-  {
-    name: "kimi-k2-thinking",
-    llm: openrouter("moonshotai/kimi-k2-thinking", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "kimi-k2.5",
-    llm: openrouter("moonshotai/kimi-k2.5", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "glm-5",
-    llm: openrouter("z-ai/glm-5", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "minimax-m2.5",
-    llm: openrouter("minimax/minimax-m2.5", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "gpt-oss-120b-high",
-    llm: openrouter("openai/gpt-oss-120b", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "deepseek-v3.2-thinking-high",
-    llm: openrouter("deepseek/deepseek-v3.2", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
+const local = createOpenAICompatible({
+  name: "local",
+  baseURL: requireEnv("LOCAL_BASE_URL"),
+  apiKey: process.env.LOCAL_API_KEY,
+  fetch: capped,
+});
 
-  // Grok
-  {
-    name: "grok-4",
-    llm: openrouter("x-ai/grok-4", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "grok-4.1-fast",
-    llm: openrouter("x-ai/grok-4.1-fast", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
+const name = process.env.LOCAL_MODEL;
+if (!name) throw new Error("Set LOCAL_MODEL");
 
-  // Gemini
-  {
-    name: "gemini-3-pro-preview",
-    llm: openrouter("google/gemini-3-pro-preview", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "gemini-3.1-pro-preview",
-    llm: openrouter("google/gemini-3.1-pro-preview", defaultProviderOptions),
-    reasoning: true,
-  },
-  // Anthropic
-  {
-    name: "claude-4.6-sonnet",
-    llm: openrouter("anthropic/claude-sonnet-4.6", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "claude-4.5-opus-thinking-high",
-    llm: openrouter("anthropic/claude-opus-4.5", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "claude-4.6-opus-thinking-high",
-    llm: openrouter("anthropic/claude-opus-4.6", {
-      ...defaultProviderOptions,
-      reasoning: { effort: "high" },
-    }),
-    reasoning: true,
-  },
-
-  // OpenAI
-
-  {
-    name: "gpt-5-minimal",
-    llm: openrouter("openai/gpt-5", {
-      ...defaultProviderOptions,
-      reasoning: {
-        effort: "minimal",
-      },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "gpt-5-default",
-    llm: openrouter("openai/gpt-5", defaultProviderOptions),
-    reasoning: true,
-  },
-  {
-    name: "gpt-5-high",
-    llm: openrouter("openai/gpt-5", {
-      ...defaultProviderOptions,
-      reasoning: {
-        effort: "high",
-      },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "gpt-5-mini",
-    llm: openrouter("openai/gpt-5-mini", defaultProviderOptions),
-    reasoning: true,
-  },
-
-  {
-    name: "gpt-5.1-high",
-    llm: openrouter("openai/gpt-5.1", {
-      ...defaultProviderOptions,
-      reasoning: {
-        effort: "high",
-      },
-    }),
-    reasoning: true,
-  },
-
-  {
-    name: "gpt-5.2-default",
-    llm: openrouter("openai/gpt-5.2", defaultProviderOptions),
-    reasoning: true,
-  },
-  {
-    name: "gpt-5.2-high",
-    llm: openrouter("openai/gpt-5.2", {
-      ...defaultProviderOptions,
-      reasoning: {
-        effort: "high",
-      },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "gpt-5.2-xhigh",
-    llm: openrouter("openai/gpt-5.2", {
-      ...defaultProviderOptions,
-      reasoning: {
-        effort: "xhigh",
-      },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "gpt-5.2-pro",
-    llm: openrouter("openai/gpt-5.2-pro", {
-      ...defaultProviderOptions,
-      reasoning: {
-        effort: "high",
-      },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "gemini-3-flash-high",
-    llm: openrouter("google/gemini-3-flash-preview", {
-      ...defaultProviderOptions,
-      reasoning: {
-        effort: "high",
-      },
-    }),
-    reasoning: true,
-  },
-  {
-    name: "gemini-3-flash-low",
-    llm: openrouter("google/gemini-3-flash-preview", {
-      ...defaultProviderOptions,
-      reasoning: {
-        effort: "low",
-      },
-    }),
-    reasoning: true,
-  },
-];
+export const modelsToRun: RunnableModel[] = [{ name, llm: local(name), reasoning: true }];
