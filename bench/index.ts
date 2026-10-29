@@ -7,7 +7,7 @@ import {
   OUTPUT_DIRECTORY,
   STAGGER_DELAY_MS,
 } from "./constants";
-import { generateText } from "ai";
+import { runOpenCode } from "./opencode";
 import { mkdir, writeFile, readdir, readFile as fsReadFile } from "fs/promises";
 import { existsSync } from "fs";
 import { join, basename, extname, dirname } from "path";
@@ -172,24 +172,11 @@ async function runTest(input: {
   });
 
   async function internal__testRun() {
-    const testResult = await generateText({
-      model: model.llm,
-      system: system_prompt,
-      prompt,
-
-      temperature: 1.0,
-      providerOptions: {
-        ...model.providerOptions,
-        // openrouter: {
-        //   reasoning: {
-        //     max_tokens: 2048,
-        //   },
-        // },
-        // xai: {
-        //   reasoningEffort: "high",
-        // },
-      },
-    });
+    const response = await runOpenCode({ system: system_prompt, prompts: [prompt], mode: "answer",
+      timeout: TIMEOUT_SECONDS, output_tokens: Number(process.env.SKATE_MAX_TOKENS ?? 8192) });
+    const testResult = { text: response.text, usage: { outputTokens: response.completion_tokens },
+      providerMetadata: undefined as any, harness: response.harness,
+      harnessVersion: response.harness_version, events: response.events };
 
     const correctness = isCorrect({
       answers,
@@ -305,6 +292,8 @@ async function findPreviousResultsForSuite(options: {
       const parsed = JSON.parse(raw);
       if (!parsed || !parsed.results || !Array.isArray(parsed.results))
         continue;
+
+      if (parsed.metadata?.harness !== "opencode" || parsed.metadata?.harnessVersion !== "2.1.4") continue;
 
       const suiteNameInFile: string | undefined = parsed.metadata?.testSuite;
       const versionInFile: string | null = parsed.metadata?.version ?? null;
@@ -1084,6 +1073,7 @@ export async function testRunner(options: TestRunnerOptions) {
 
     const outputData = {
       metadata: {
+        harness: "opencode", harnessVersion: "2.1.4",
         timestamp: new Date().toISOString(),
         totalTests: results.length,
         correct,
@@ -1192,9 +1182,12 @@ export async function testRunner(options: TestRunnerOptions) {
         return a.averageDuration - b.averageDuration;
       });
 
+    if (errors > 0) process.exitCode = 1;
+
     const summaryData = {
       rankings: modelRankings,
       metadata: {
+        harness: "opencode", harnessVersion: "2.1.4",
         timestamp: new Date().toISOString(),
         totalModels: modelRankings.length,
         totalTestsRun: results.length,
@@ -1229,8 +1222,8 @@ export async function testRunner(options: TestRunnerOptions) {
     );
     if (!silent) console.log(`Summary saved to: ${summaryFilepath}`);
 
-    // Update visualizer data
-    try {
+    // The LAN dashboard reads result files; do not mutate the tracked visualizer fixture.
+    if (process.env.SKATE_UPDATE_VISUALIZER !== "0") try {
       const benchDir = dirname(fileURLToPath(import.meta.url));
       const visualizerDataPath = join(
         benchDir,
